@@ -1,0 +1,193 @@
+/*
+ * WebClient Class
+ * 
+ * CPSC 441
+ * Assignment 2
+ * 
+ * @author 	Majid Ghaderi
+ * @version	2024
+ *
+ * 
+ * Ali Kirmani
+ * 30115539
+ */
+
+ import java.io.*;
+ import java.util.HashMap;
+ import java.util.logging.*;
+ 
+ import javax.net.SocketFactory;
+ import javax.net.ssl.SSLSocketFactory;
+ 
+ import java.net.Socket;
+ 
+ public class WebClient {
+ 
+     String objectURL;
+ 
+     private static final Logger logger = Logger.getLogger("WebClient"); // global logger
+ 
+     /**
+      * Default no-arg constructor
+      */
+     public WebClient() {
+         // nothing to do!
+     }
+ 
+     /**
+      * Downloads the object specified by the parameter url.
+      *
+      * @param url	URL of the object to be downloaded. It is a fully qualified URL.
+      */
+     public void getObject(String url) {
+         // Manually parse the URL for protocol, server name, port number, and object path
+         String protocol = "";
+         String serverName = "";
+         int port = -1;
+         String objectPath = "";
+ 
+         // Check if the URL starts with "http://" or "https://"
+         if (url.startsWith("http://")) {
+             protocol = "HTTP";
+             url = url.substring(7); // Remove "http://"
+             port = 80; // Default port for HTTP
+         } else if (url.startsWith("https://")) {
+             protocol = "HTTPS";
+             url = url.substring(8); // Remove "https://"
+             port = 443; // Default port for HTTPS
+         } else {
+             logger.severe("Unsupported protocol in the URL.");
+             return;
+         }
+ 
+         // Find the end index of the server name, which may include a port number
+         int slashIndex = url.indexOf('/');
+         int colonIndex = url.indexOf(':');
+         int endIndex = (colonIndex != -1 && colonIndex < slashIndex) ? colonIndex : slashIndex;
+ 
+         // Extract server name and port number
+         if (endIndex != -1) {
+             String serverAndPort = url.substring(0, endIndex);
+             url = url.substring(endIndex);
+             int leftBracketIndex = serverAndPort.indexOf('[');
+             int rightBracketIndex = serverAndPort.indexOf(']');
+             if (leftBracketIndex != -1 && rightBracketIndex != -1 && leftBracketIndex < rightBracketIndex) {
+                 // Extract the port number enclosed in square brackets
+                 try {
+                     port = Integer.parseInt(serverAndPort.substring(leftBracketIndex + 1, rightBracketIndex));
+                     serverName = serverAndPort.substring(0, leftBracketIndex);
+                 } catch (NumberFormatException e) {
+                     logger.warning("Invalid port number, defaulting to " + port);
+                 }
+             } else {
+                 // No square brackets found, parse server name normally
+                 int portIndex = serverAndPort.lastIndexOf(':');
+                 if (portIndex != -1) {
+                     serverName = serverAndPort.substring(0, portIndex);
+                     try {
+                         port = Integer.parseInt(serverAndPort.substring(portIndex + 1));
+                     } catch (NumberFormatException e) {
+                         logger.warning("Invalid port number, defaulting to " + port);
+                     }
+                 } else {
+                     serverName = serverAndPort;
+                 }
+             }
+         } else {
+             serverName = url;
+         }
+ 
+         // Extract object path from the URL
+         int pathIndex = url.indexOf('/');
+         if (pathIndex != -1) {
+             objectPath = url.substring(pathIndex); // Include the slash
+         }
+ 
+         // Output the parsed components
+         System.out.println("Protocol: " + protocol);
+ 
+         try {
+             // Establish a socket connection
+             Socket socket;
+             if (protocol.equals("HTTP")) {
+                 socket = new Socket(serverName, port);
+             } else if (protocol.equals("HTTPS")) {
+                 SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+                 socket = factory.createSocket(serverName, port);
+             } else {
+                 logger.severe("Unsupported protocol.");
+                 return;
+             }
+ 
+             try (OutputStream out = socket.getOutputStream();
+                  InputStream in = socket.getInputStream()) {
+ 
+                 // Send GET request with required header lines
+                 String request = "GET " + objectPath + " HTTP/1.1\r\n" +
+                         "Host: " + serverName + "\r\n" +
+                         "Connection: close\r\n" +
+                         "\r\n";
+                 out.write(request.getBytes());
+                 out.flush();
+ 
+                 // Read the response status line
+                 StringBuilder statusLine = new StringBuilder();
+                 int c;
+                 while ((c = in.read()) != -1 && c != '\r' && c != '\n') {
+                     statusLine.append((char) c);
+                 }
+                 System.out.println("Server Response Status: " + statusLine);
+ 
+                 // Check if the response status is "200 OK"
+                 if (statusLine.toString().startsWith("HTTP/1.1 200")) {
+                     // Skip HTTP headers
+                     boolean endOfHeaders = false;
+                     while (!endOfHeaders && (c = in.read()) != -1) {
+                         if (c == '\r') {
+                             // Check if the next character is '\n' to detect the end of headers
+                             int nextChar = in.read();
+                             if (nextChar == '\n') {
+                                 endOfHeaders = true;
+                             }
+                         }
+                     }
+ 
+                     if (!endOfHeaders) {
+                         // If we didn't find the end of headers, something went wrong
+                         logger.severe("End of HTTP headers not found.");
+                         return;
+                     }
+ 
+                     // Now start reading the file content
+                     // Create a local file with the object name
+                     String[] urlParts = url.split("/");
+                     String objectName = urlParts[urlParts.length - 1]; // Assuming the object name is the last part of the URL
+                     File file = new File(objectName);
+ 
+                     // Open a FileOutputStream to write to the local file
+                     try (FileOutputStream fos = new FileOutputStream(file)) {
+                         // Write the remaining response body to the local file
+                         int bytesRead;
+                         byte[] buffer = new byte[4096];
+                         while ((bytesRead = in.read(buffer)) != -1) {
+                             fos.write(buffer, 0, bytesRead);
+                         }
+ 
+                         System.out.println("File downloaded successfully: " + file.getAbsolutePath());
+                     } catch (IOException e) {
+                         logger.log(Level.SEVERE, "Error writing to file: " + e.getMessage(), e);
+                     }
+                 } else {
+                     System.out.println("Server response status is not '200 OK'.");
+                 }
+ 
+             } catch (IOException e) {
+                 logger.log(Level.SEVERE, "Error: " + e.getMessage(), e);
+             }
+ 
+         } catch (IOException e) {
+             logger.log(Level.SEVERE, "Error creating socket: " + e.getMessage(), e);
+         }
+     }
+ }
+ 
